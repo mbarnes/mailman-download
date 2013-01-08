@@ -73,43 +73,71 @@ def download(list, years, user, password)
     rebuild = false
 
     puts "Downloading #{list}"
+    puts "Working directory #{FileUtils.pwd}" if $verbose
 
     # Download the content for the given years
     years.each do |year|
-      Date::MONTHNAMES[1..-1].each do |month|
+      Date::MONTHNAMES[1..-1].each_with_index do |month, index|
+        # Add one to the index to line up with the calendar index
+        index = index + 1
+
         filename = year + "-" + month + ".txt.gz"
+        orig_filename = filename + ".orig"
+        complete_marker = year + "-" + month + ".complete"
 
-        url = setup_url(list, filename, user, password)
-        puts "Downloading #{url}..." if $verbose
-
-        # Check the files for updates to determine whether
-        # the archive needs to be rebuilt
-        last_mod = nil
-        if File.exists?(filename)
-          last_mod = File.mtime(filename)
-          puts "Original #{filename} modification time = " + last_mod.to_s if $verbose
+        if File.exists?(complete_marker)
+          puts "Skipping #{filename} as complete marker was found" if $verbose
         else
-          puts "Downloading #{filename} for first time"
-        end
+          url = setup_url(list, filename, user, password)
+          puts "Downloading #{url}..." if $verbose
 
-        # Use the -N flag to download incremental updates
-        `wget -q -N --load-cookies cookies.txt #{url}`
+          # Check the files for updates to determine whether
+          # the archive needs to be rebuilt
+          last_mod = nil
+          if File.exists?(filename)
+            last_mod = File.mtime(filename)
+            puts "Original #{filename} modification time = " + last_mod.to_s if $verbose
 
-        # Check the mod time for changes
-        if File.exists?(filename)
-          new_mod = File.mtime(filename) if File.exists?(filename)
-          puts "New #{filename} modification time = " + new_mod.to_s if $verbose
-        end
+            # Make a local copy to allow for diff
+            FileUtils.cp filename, orig_filename
+          else
+            puts "Downloading #{filename} for first time" if $verbose
+          end
 
-        if (last_mod and new_mod > last_mod) or !last_mod
-          puts "Change detected - will rebuild archive" if $verbose
-          rebuild = true
-        end
+          # Don't attempt a download for a file in the future
+          if year.to_i <= Time.now.year and index <= Time.now.month
+            # Use the -N flag to download incremental updates where possible
+            `wget -q -N --load-cookies cookies.txt #{url}` unless File.exists?(complete_marker)
+          else
+            puts "Skipping download - file is in the future" if $verbose
+          end
 
-        # If nothing was downloaded, create a marker file
-        # That will keep it from attempting to download later
-        unless File.exists?(filename)
-          FileUtils.touch filename
+          # Determine if this is an archive isn't going to change
+          if year.to_i < Time.now.year or (year.to_i == Time.now.year and index < Time.now.month)
+            # Write a complete file so we don't re-attempt a download
+            FileUtils.touch(complete_marker)
+          end
+
+          # Check the mod time for changes
+          if File.exists?(filename)
+            new_mod = File.mtime(filename) if File.exists?(filename)
+            puts "New #{filename} modification time = " + new_mod.to_s if $verbose
+
+            if (last_mod and new_mod > last_mod) or !last_mod
+              puts "Last modified date change detected, checking diff" if $verbose
+
+              if File.exists?(orig_filename)
+                # Only rebuild if there is an actual file difference
+                `diff #{filename} #{orig_filename}`
+                result=$?
+                puts "No differences in actual file" if result == 0 and $verbose
+                rebuild = true unless result == 0
+              else
+                # The file was newly downloaded, rebuild
+                rebuild = true
+              end
+            end
+          end
         end
       end
     end
@@ -149,12 +177,12 @@ optparse = OptionParser.new do|opts|
    opts.on( '-v', '--verbose', 'Output more information' ) do
      options[:verbose] = true
    end
-   options[:config] = "lists.yaml"
-   opts.on( '-c', '--config FILE', '[Default: lists.yaml] Specify a custom config file' ) do |file|
+   options[:config] = File.expand_path("~/lists.yaml")
+   opts.on( '-c', '--config FILE', '[Default: ~/lists.yaml] Specify a custom config file' ) do |file|
      options[:config] = file
    end
-   options[:archive_dir] = "mail-archives"
-   opts.on( '-a', '--archive DIR', '[Default: mail-archives] Specify a custom archive storage location' ) do |file|
+   options[:archive_dir] = File.expand_path("~/mail-archives")
+   opts.on( '-a', '--archive DIR', '[Default: ~/mail-archives] Specify a custom archive storage location' ) do |file|
      options[:archive_dir] = file
    end
    opts.on( '-f', '--force', 'Forces a rebuild of the archive' ) do
