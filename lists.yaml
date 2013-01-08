@@ -25,6 +25,7 @@ lists:
     password: 'password'
 
   - name: 'some-other-list'
+    archive_name: 'my-different-archive-name'
 
   - name: 'openstack-dev'
     years: ['2012', '2013']
