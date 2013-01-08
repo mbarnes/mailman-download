@@ -174,10 +174,8 @@ def download(list, years, user, password, mailman)
 end
 
 # Unzip all the gzip format mail files
-def rebuild_archive(list, local_mail)
+def rebuild_archive(archive, local_mail)
   puts "Rebuilding archive"
-
-  archive = list + '-archive'
 
   # Remove any existing archive file
   FileUtils.rm_f archive
@@ -258,7 +256,8 @@ $config['lists'].each do |list|
   rebuild = download(name, years, user, password, list['mailman'])
 
   # Unzip them
-  rebuild_archive(name, $config['local_mail']) if rebuild or options[:force_rebuild]
+  archive_name = list['archive_name'] || name
+  rebuild_archive(archive_name + "-archive", $config['local_mail']) if rebuild or options[:force_rebuild]
 
   # Back up to the archives directory
   FileUtils.cd ".."
