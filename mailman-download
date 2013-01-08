@@ -49,26 +49,52 @@ require 'fileutils'
 require 'optparse'
 require 'yaml'
 
+def in_the_future?(year, month)
+  year > Time.now.year or (year == Time.now.year and month > Time.now.month)
+end
+
+# Returns true if the year and month are in the past, which cannot include
+# the current month
+def in_the_past?(year, month)
+  year < Time.now.year or (year == Time.now.year and month < Time.now.month)
+end
+
+def get_mailman_config(list_config, key)
+  if list_config
+    list_config[key] || $config['mailman'][key]
+  else
+    $config['mailman'][key]
+  end
+end
+
 # Get the url to download from, authenticating if necessary
-def setup_url(list, filename, user, password)
+def setup_url(list, filename, user, password, mailman_config)
+  # Build up the public and private urls - allow overriding
+  # of mailman info at the list level
+  server = get_mailman_config(mailman_config, 'server')
+  public_context = get_mailman_config(mailman_config, 'public_context')
+  private_context = get_mailman_config(mailman_config, 'private_context')
+  public_url = "http://" + server + public_context + "/"
+  private_url = "http://" + server + private_context + "/"
+
   # Default the the public_url
-  url = PUBLIC_URL
+  url = public_url
 
   # If authentication is provided, use the private
   # context and authenticate first, saving cookies
   if password
     unless File.exists?("cookies.txt")
       `wget -q --post-data "username=#{user}&password=#{password}" --save-cookies=cookies.txt \
-       --keep-session-cookies -O /dev/null #{PRIVATE_URL + list}`
+       --keep-session-cookies -O /dev/null #{private_url + list}`
     end
-    url = PRIVATE_URL
+    url = private_url
   end
 
   return url + list + "/" + filename
 end
 
 # Download the archives
-def download(list, years, user, password)
+def download(list, years, user, password, mailman)
     # Whether the archive needs to be rebuilt
     rebuild = false
 
@@ -78,9 +104,7 @@ def download(list, years, user, password)
     # Download the content for the given years
     years.each do |year|
       Date::MONTHNAMES[1..-1].each_with_index do |month, index|
-        # Add one to the index to line up with the calendar index
-        index = index + 1
-
+        puts "Downloading month = #{month} / index = #{index}" if $verbose
         filename = year + "-" + month + ".txt.gz"
         orig_filename = filename + ".orig"
         complete_marker = year + "-" + month + ".complete"
@@ -88,7 +112,7 @@ def download(list, years, user, password)
         if File.exists?(complete_marker)
           puts "Skipping #{filename} as complete marker was found" if $verbose
         else
-          url = setup_url(list, filename, user, password)
+          url = setup_url(list, filename, user, password, mailman)
           puts "Downloading #{url}..." if $verbose
 
           # Check the files for updates to determine whether
@@ -105,7 +129,7 @@ def download(list, years, user, password)
           end
 
           # Don't attempt a download for a file in the future
-          if year.to_i <= Time.now.year and index <= Time.now.month
+          unless in_the_future?(year.to_i, index + 1)
             # Use the -N flag to download incremental updates where possible
             `wget -q -N --load-cookies cookies.txt #{url}` unless File.exists?(complete_marker)
           else
@@ -113,7 +137,7 @@ def download(list, years, user, password)
           end
 
           # Determine if this is an archive isn't going to change
-          if year.to_i < Time.now.year or (year.to_i == Time.now.year and index < Time.now.month)
+          if in_the_past?(year.to_i, index + 1)
             # Write a complete file so we don't re-attempt a download
             FileUtils.touch(complete_marker)
           end
@@ -205,11 +229,7 @@ unless File.exists?(config_file)
   exit 1
 end
 
-config = YAML.load_file(config_file)
-
-# Build up the public and private urls
-PUBLIC_URL = "http://" + config['mailman']['server'] + config['mailman']['public_context'] + "/"
-PRIVATE_URL = "http://" + config['mailman']['server'] + config['mailman']['private_context'] + "/"
+$config = YAML.load_file(config_file)
 
 # If the archive location exists,
 # make sure it's actually a directory
@@ -223,22 +243,22 @@ end
 FileUtils.mkdir_p archives
 FileUtils.cd archives
 
-config['lists'].each do |list|
+$config['lists'].each do |list|
   # Parse the list structure
   name = list['name']
   user = list['user']
   password = list['password']
-  years = list['years'] || config['years']
+  years = list['years'] || $config['years']
 
   # Create the list directory for processing
   FileUtils.mkdir_p name
   FileUtils.cd name
 
   # Download the archives
-  rebuild = download(name, years, user, password)
+  rebuild = download(name, years, user, password, list['mailman'])
 
   # Unzip them
-  rebuild_archive(name, config['local_mail']) if rebuild or options[:force_rebuild]
+  rebuild_archive(name, $config['local_mail']) if rebuild or options[:force_rebuild]
 
   # Back up to the archives directory
   FileUtils.cd ".."

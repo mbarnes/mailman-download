@@ -26,5 +26,8 @@ lists:
 
   - name: 'some-other-list'
 
-  - name: 'yet-another-list'
-    years: ['2011', '2012', '2013']
+  - name: 'openstack-dev'
+    years: ['2012', '2013']
+    mailman:
+      server: 'lists.openstack.org'
+      public_context: '/pipermail'
