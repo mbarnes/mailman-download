@@ -1,0 +1,217 @@
+#!/bin/ruby
+
+# This script downloads all the archives for a given set of lists so that you
+# can keep a locally, searchable copy.  It will create a mail-archive directory
+# in the location that it is run and re-running it will incrementally pick up
+# where it left off.
+#
+# After running, it will move the scripts to your Thunderbird local mail
+# directory.  When you restart Thunderbird, the new archives should show up
+# there.
+#
+# The list configuration is parsed from a simple YAML file that specifies your
+# mailman server as well as the lists and authentication (if needed) to use.
+# The config file defaults to lists.yaml and can be overridden as needed.
+#
+# Example usage:
+#  ./mailman-download -c mylists.yaml
+#
+# Sample config format:
+# ---
+# # The mailman server configuration
+# mailman:
+#   server: 'mailman.example.com'
+#
+#   # The URL context for public archives
+#   public_context: '/archives'
+#
+#   # The URL context for private archives
+#   private_context: '/mailman/private'
+#
+# # Where to place the archive files
+#  local_mail: '~/.thunderbird/*.default/Mail/Local\ Folders'
+#
+#
+# # The default years to download
+# years: ['2011', '2012']
+#
+# lists:
+#   - name: 'some-private-list'
+#     user: 'YOUR_USERNAME'
+#     password: 'YOUR_PASSWORD'
+#
+#   - name: 'some-public-list'
+#
+#   - name: 'some-public-list'
+#   - years: ['2010', '2011', '2012']
+require 'date'
+require 'fileutils'
+require 'optparse'
+require 'yaml'
+
+# Get the url to download from, authenticating if necessary
+def setup_url(list, filename, user, password)
+  # Default the the public_url
+  url = PUBLIC_URL
+
+  # If authentication is provided, use the private
+  # context and authenticate first, saving cookies
+  if password
+    unless File.exists?("cookies.txt")
+      `wget -q --post-data "username=#{user}&password=#{password}" --save-cookies=cookies.txt \
+       --keep-session-cookies -O /dev/null #{PRIVATE_URL + list}`
+    end
+    url = PRIVATE_URL
+  end
+
+  return url + list + "/" + filename
+end
+
+# Download the archives
+def download(list, years, user, password)
+    # Whether the archive needs to be rebuilt
+    rebuild = false
+
+    puts "Downloading #{list}"
+
+    # Download the content for the given years
+    years.each do |year|
+      Date::MONTHNAMES[1..-1].each do |month|
+        filename = year + "-" + month + ".txt.gz"
+
+        url = setup_url(list, filename, user, password)
+        puts "Downloading #{url}..." if $verbose
+
+        # Check the files for updates to determine whether
+        # the archive needs to be rebuilt
+        last_mod = nil
+        if File.exists?(filename)
+          last_mod = File.mtime(filename)
+          puts "Original #{filename} modification time = " + last_mod.to_s if $verbose
+        else
+          puts "Downloading #{filename} for first time"
+        end
+
+        # Use the -N flag to download incremental updates
+        `wget -q -N --load-cookies cookies.txt #{url}`
+
+        # Check the mod time for changes
+        if File.exists?(filename)
+          new_mod = File.mtime(filename) if File.exists?(filename)
+          puts "New #{filename} modification time = " + new_mod.to_s if $verbose
+        end
+
+        if (last_mod and new_mod > last_mod) or !last_mod
+          puts "Change detected - will rebuild archive" if $verbose
+          rebuild = true
+        end
+
+        # If nothing was downloaded, create a marker file
+        # That will keep it from attempting to download later
+        unless File.exists?(filename)
+          FileUtils.touch filename
+        end
+      end
+    end
+
+    # Clean up the cookies file
+    File.delete("cookies.txt") if File.exists?("cookies.txt")
+
+    # Return whether or not a rebuild it needed
+    return rebuild
+end
+
+# Unzip all the gzip format mail files
+def rebuild_archive(list, local_mail)
+  puts "Rebuilding archive"
+
+  archive = list + '-archive'
+
+  # Remove any existing archive file
+  FileUtils.rm_f archive
+
+  # Extract and contact any zip files
+  Dir.glob("*.gz").each do |file|
+    puts "Adding #{file} to archive"
+
+    # Unzip and concat
+    `gunzip -q #{file} -c 2> /dev/null >> #{archive}`
+  end
+
+  # Move the archive to the final location
+  puts "Copying archive #{archive} to #{local_mail}"
+  `mv #{archive} #{local_mail}`
+end
+
+options = {}
+optparse = OptionParser.new do|opts|
+   opts.banner = "Usage: mailman-download config-file"
+   opts.on( '-v', '--verbose', 'Output more information' ) do
+     options[:verbose] = true
+   end
+   options[:config] = "lists.yaml"
+   opts.on( '-c', '--config FILE', '[Default: lists.yaml] Specify a custom config file' ) do |file|
+     options[:config] = file
+   end
+   options[:archive_dir] = "mail-archives"
+   opts.on( '-a', '--archive DIR', '[Default: mail-archives] Specify a custom archive storage location' ) do |file|
+     options[:archive_dir] = file
+   end
+   opts.on( '-f', '--force', 'Forces a rebuild of the archive' ) do
+     options[:force_rebuild] = true
+   end
+   opts.on( '-h', '--help', 'Display this screen' ) do
+     puts opts
+     exit
+   end
+end
+
+optparse.parse!
+
+$verbose = options[:verbose]
+
+# Load the supplied configuration
+config_file = options[:config]
+unless File.exists?(config_file)
+  puts "ERROR - config file (#{config_file}) not found"
+  exit 1
+end
+
+config = YAML.load_file(config_file)
+
+# Build up the public and private urls
+PUBLIC_URL = "http://" + config['mailman']['server'] + config['mailman']['public_context'] + "/"
+PRIVATE_URL = "http://" + config['mailman']['server'] + config['mailman']['private_context'] + "/"
+
+# If the archive location exists,
+# make sure it's actually a directory
+archives = options[:archive_dir]
+if Dir.exists?(archives) and !File.directory?(archives)
+  puts "ERROR - archive directory (#{archives}) is not a directory"
+  exit 2
+end
+
+# Create and enter the archives directory
+FileUtils.mkdir_p archives
+FileUtils.cd archives
+
+config['lists'].each do |list|
+  # Parse the list structure
+  name = list['name']
+  user = list['user']
+  password = list['password']
+  years = list['years'] || config['years']
+
+  # Create the list directory for processing
+  FileUtils.mkdir_p name
+  FileUtils.cd name
+
+  # Download the archives
+  rebuild = download(name, years, user, password)
+
+  # Unzip them
+  rebuild_archive(name, config['local_mail']) if rebuild or options[:force_rebuild]
+
+  # Back up to the archives directory
+  FileUtils.cd ".."
+end

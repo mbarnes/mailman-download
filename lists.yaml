@@ -1,0 +1,30 @@
+---
+#
+# This is a sample list configuration file
+#
+
+# The mailman server configuration
+mailman:
+  server: 'post-office.example.com'
+
+  # The URL context for public archives
+  public_context: '/archives'
+
+  # The URL context for private archives
+  private_context: '/mailman/private'
+
+# Default for Thunderbird on Fedora
+local_mail: '~/.thunderbird/*.default/Mail/Local\ Folders'
+
+# The default years to download
+years: ['2012', '2013']
+
+lists:
+  - name: 'some-list'
+    user: 'user@example.com'
+    password: 'password'
+
+  - name: 'some-other-list'
+
+  - name: 'yet-another-list'
+    years: ['2011', '2012', '2013']
