@@ -13,8 +13,8 @@ mailman:
   # The URL context for private archives
   private_context: '/mailman/private'
 
-# Default for Thunderbird on Fedora
-local_mail: '~/.thunderbird/*.default/Mail/Local\ Folders'
+# Default for Icedove on Debian
+local_mail: '~/.icedove/*.default/Mail/Local\ Folders'
 
 # The default years to download
 years: ['2012', '2013']
