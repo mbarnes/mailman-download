@@ -1,4 +1,4 @@
-#!/bin/ruby
+#!/usr/bin/ruby
 
 # This script downloads all the archives for a given set of lists so that you
 # can keep a locally, searchable copy.  It will create a mail-archive directory
